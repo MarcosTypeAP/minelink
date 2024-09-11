@@ -308,9 +308,10 @@ type DialManager struct {
 
 	syncTimer SyncTimer
 
-	closed    bool
-	connected chan struct{} // closed when connected
-	mu        sync.RWMutex
+	closed         bool
+	connected      chan struct{} // closed when connected
+	connectedMutex sync.RWMutex
+	mu             sync.RWMutex
 }
 
 func NewDialManager(laddr, raddr net.Addr, syncTimer SyncTimer) *DialManager {
@@ -342,11 +343,14 @@ func NewDialManager(laddr, raddr net.Addr, syncTimer SyncTimer) *DialManager {
 
 func (m *DialManager) WaitConnection(ctx context.Context) {
 Beginning:
+	m.connectedMutex.RLock()
 	select {
 	case <-m.connected:
 	case <-ctx.Done():
-    return
+		m.connectedMutex.RUnlock()
+		return
 	}
+	m.connectedMutex.RUnlock()
 
 	if m.IsClosed() {
 		goto Beginning
@@ -372,13 +376,15 @@ func (m *DialManager) Close() error {
 	defer m.mu.Unlock()
 
 	if m.conn == nil {
-		return fmt.Errorf("trying to close a nil connection")
+		return fmt.Errorf("attempting to close a nil connection")
 	}
 	err := m.conn.Close()
 
 	select {
 	case <-m.connected:
+		m.connectedMutex.Lock()
 		m.connected = make(chan struct{})
+		m.connectedMutex.Unlock()
 	default:
 	}
 	m.closed = true
@@ -443,9 +449,10 @@ type ListenerManager struct {
 	listenAddr   net.Addr
 	listening    bool
 
-	closed    bool
-	connected chan struct{} // closed when a connection is accepted
-	mu        sync.RWMutex
+	closed         bool
+	connected      chan struct{} // closed when a connection is accepted
+	connectedMutex sync.RWMutex
+	mu             sync.RWMutex
 }
 
 func NewListenerManager(listenAddr net.Addr) *ListenerManager {
@@ -474,11 +481,14 @@ func NewListenerManager(listenAddr net.Addr) *ListenerManager {
 
 func (m *ListenerManager) WaitConnection(ctx context.Context) {
 Beginning:
+	m.connectedMutex.RLock()
 	select {
 	case <-m.connected:
 	case <-ctx.Done():
+		m.connectedMutex.RUnlock()
 		return
 	}
+	m.connectedMutex.RUnlock()
 
 	if m.IsClosed() {
 		goto Beginning
@@ -507,7 +517,7 @@ func (m *ListenerManager) Listen(ctx context.Context) error {
 
 func (m *ListenerManager) CloseListener() error {
 	if m.listener == nil {
-		return fmt.Errorf("trying to close a nil listener")
+		return fmt.Errorf("attempting to close a nil listener")
 	}
 
 	err := m.listener.Close()
@@ -538,13 +548,15 @@ func (m *ListenerManager) Close() error {
 	defer m.mu.Unlock()
 
 	if m.conn == nil {
-		return fmt.Errorf("trying to close a nil connection")
+		return fmt.Errorf("attempting to close a nil connection")
 	}
 	err := m.conn.Close()
 
 	select {
 	case <-m.connected:
+		m.connectedMutex.Lock()
 		m.connected = make(chan struct{})
+		m.connectedMutex.Unlock()
 	default:
 	}
 	m.closed = true
